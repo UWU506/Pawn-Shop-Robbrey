@@ -1,0 +1,338 @@
+local QBCore = exports['qb-core']:GetCoreObject()
+
+local alarmHacked = false
+local laptopHacked = false
+local inRobbery = false
+local stashInteractionsAdded = false
+local laptopInteractionId = nil
+local alarmInteractionId = nil
+local openedStashes = 0
+
+local attempts = {
+    alarm = 0,
+    laptop = 0
+}
+
+local stashes = {}
+for i, s in ipairs(Config.Stashes) do
+    stashes[i] = {
+        coord = s.coord,
+        serverEvent = s.serverEvent,
+        event = "Saad-PawnShoprobbery:stash"..i,
+        state = { disabled = false, failed = 0, opened = false }
+    }
+end
+
+
+
+local function ResetRobberyState()
+    alarmHacked = false
+    laptopHacked = false
+    stashInteractionsAdded = false
+    laptopInteractionId = nil
+    alarmInteractionId = nil
+    openedStashes = 0
+    attempts.alarm = 0
+    attempts.laptop = 0
+
+    for _, stash in ipairs(stashes) do
+        stash.state.disabled = false
+        stash.state.failed = 0
+        stash.state.opened = false
+    end
+end
+
+local function OnStashLooted(stash)
+    stash.state.opened = true
+    openedStashes += 1
+
+    if openedStashes >= 6 then
+        TriggerServerEvent('Saad-PawnShoprobbery:StartCooldown')
+        QBCore.Functions.Notify("The pawn shop has been cleared.", "success")
+        ResetRobberyState()
+    end
+end
+
+local function CanStartRobbery()
+    if inRobbery then
+        QBCore.Functions.Notify("You are already doing something.", "error")
+        return false
+    end
+    return true
+end
+
+
+
+CreateThread(function()
+    alarmInteractionId = exports['interact']:AddInteraction({
+        coords = Config.AlarmHack.coords,
+        distance = 1.0,
+        interactDst = 1.0,
+        options = {
+            {
+                label = "Hack Alarm System",
+                action = function()
+
+                    if alarmHacked then
+                        QBCore.Functions.Notify("The alarm is already disabled.", "error")
+                        return
+                    end
+
+                    if not CanStartRobbery() then return end
+
+                    if attempts.alarm >= 3 then
+                        QBCore.Functions.Notify("No more attempts allowed.", "error")
+                        return
+                    end
+
+                    if not QBCore.Functions.HasItem('hacking_device') then
+                        QBCore.Functions.Notify("You need a hacking device.", "error")
+                        return
+                    end
+
+                    QBCore.Functions.TriggerCallback("Saad-PawnShoprobbery:CanHack", function(can, reason)
+    if not can then
+        if reason == "cooldown" then
+            QBCore.Functions.Notify("The pawn shop was robbed recently.", "error")
+        elseif reason == "cops" then
+            QBCore.Functions.Notify("Not enough police on duty.", "error")
+        else
+            QBCore.Functions.Notify("You cannot hack right now.", "error")
+        end
+        return
+    end
+
+
+                        inRobbery = true
+
+                        RequestAnimDict("anim@amb@clubhouse@tutorial@bkr_tut_ig3@")
+                        while not HasAnimDictLoaded("anim@amb@clubhouse@tutorial@bkr_tut_ig3@") do Wait(0) end
+                        TaskPlayAnim(PlayerPedId(),
+                            "anim@amb@clubhouse@tutorial@bkr_tut_ig3@",
+                            "machinic_loop_mechandplayer",
+                            8.0, -8, Config.AlarmHack.time, 1, 0, false, false, false
+                        )
+
+                        exports['minigames']:startUntangleGame(13000, 8, function(success)
+                            ClearPedTasks(PlayerPedId())
+                            inRobbery = false
+
+                            if success then
+                                alarmHacked = true
+                                QBCore.Functions.Notify("Alarm disabled.", "success")
+
+
+                                if alarmInteractionId then
+                                    exports['interact']:RemoveInteraction(alarmInteractionId)
+                                    alarmInteractionId = nil
+                                end
+
+                                laptopInteractionId = exports['interact']:AddInteraction({
+                                    coords = Config.LaptopHack.coords,
+                                    distance = 1.0,
+                                    interactDst = 1.0,
+                                    options = {
+                                        {
+                                            label = "Hack Laptop",
+                                            action = function()
+
+                                                if laptopHacked then
+                                                    QBCore.Functions.Notify("Laptop already hacked.", "error")
+                                                    return
+                                                end
+
+                                                if not CanStartRobbery() then return end
+
+                                                if attempts.laptop >= 3 then
+                                                    QBCore.Functions.Notify("No more attempts allowed.", "error")
+                                                    return
+                                                end
+
+                                                if not QBCore.Functions.HasItem('hacking_device') then
+                                                    QBCore.Functions.Notify("You need a hacking device.", "error")
+                                                    return
+                                                end
+
+                                                inRobbery = true
+
+                                                RequestAnimDict("anim@heists@prison_heiststation@cop_reactions")
+                                                while not HasAnimDictLoaded("anim@heists@prison_heiststation@cop_reactions") do Wait(0) end
+                                                TaskPlayAnim(
+                                                    PlayerPedId(),
+                                                    "anim@heists@prison_heiststation@cop_reactions",
+                                                    "cop_b_idle",
+                                                    8.0, -8, Config.LaptopHack.time,
+                                                    1, 0, false, false, false
+                                                )
+
+                                                exports["skillchecks"]:startWordsGame(2, 7, function(success)
+                                                    ClearPedTasks(PlayerPedId())
+                                                    inRobbery = false
+
+if success then
+    laptopHacked = true
+    QBCore.Functions.Notify("Laptop hacked.", "success")
+
+    -- Police Dispatch
+    local data = exports['cd_dispatch']:GetPlayerInfo()
+    local sexText = (data.sex == "male" and "A man is robbing") or (data.sex == "female" and "A woman is robbing") or "Someone is robbing"
+
+    TriggerServerEvent('cd_dispatch:AddNotification', {
+        job_table = { 'police' },
+        coords = data.coords,
+        title = "Pawn Shop Robbery",
+        message = sexText .. " the pawn shop.",
+        flash = 1,
+        unique_id = tostring(math.random(1000000, 9999999)),
+        blip = {
+            sprite = 628,
+            scale = 1.0,
+            colour = 5,
+            flashes = false,
+            text = "Pawn Shop Robbery",
+            time = (5 * 60 * 1000),
+            sound = 1,
+        }
+    })
+
+
+
+                                                        if laptopInteractionId then
+                                                            exports['interact']:RemoveInteraction(laptopInteractionId)
+                                                            laptopInteractionId = nil
+                                                        end
+
+
+                                                        if not stashInteractionsAdded then
+                                                            for _, stash in ipairs(stashes) do
+                                                                exports['interact']:AddInteraction({
+                                                                    coords = stash.coord,
+                                                                    distance = 1.0,
+                                                                    interactDst = 1.0,
+                                                                    options = {
+                                                                        {
+                                                                            label = "Search",
+                                                                            action = function()
+                                                                                TriggerEvent(stash.event)
+                                                                            end
+                                                                        }
+                                                                    }
+                                                                })
+                                                            end
+
+                                                            stashInteractionsAdded = true
+                                                        end
+
+                                                    else
+                                                        attempts.laptop += 1
+                                                        QBCore.Functions.Notify("Failed ("..attempts.laptop.."/3)", "error")
+                                                    end
+                                                end)
+                                            end
+                                        }
+                                    }
+                                })
+
+                            else
+                                attempts.alarm += 1
+                                QBCore.Functions.Notify("Failed ("..attempts.alarm.."/3)", "error")
+                            end
+                        end)
+                    end)
+                end
+            }
+        }
+    })
+end)
+
+
+
+for index, stash in ipairs(stashes) do
+    RegisterNetEvent(stash.event)
+    AddEventHandler(stash.event, function()
+
+        if not laptopHacked then
+            QBCore.Functions.Notify("Hack the laptop first.", "error")
+            return
+        end
+
+        if stash.state.disabled then
+            QBCore.Functions.Notify("This stash is no longer available.", "error")
+            return
+        end
+
+        if stash.state.failed >= 3 then
+            stash.state.disabled = true
+            QBCore.Functions.Notify("Stash locked.", "error")
+            return
+        end
+
+        if not QBCore.Functions.HasItem('lockpick') then
+            QBCore.Functions.Notify("You need a lockpick.", "error")
+            return
+        end
+
+        local ped = PlayerPedId()
+
+        RequestAnimDict("anim@heists@ornate_bank@grab_cash")
+        while not HasAnimDictLoaded("anim@heists@ornate_bank@grab_cash") do Wait(0) end
+
+        TaskPlayAnim(ped, "anim@heists@ornate_bank@grab_cash", "grab",
+            8.0, -8, -1, 49, 0, false, false, false)
+        Wait(1000)
+
+        exports['skillchecks']:startAlphabetGame(4000, 10, function(success)
+            ClearPedTasks(ped)
+
+            if success then
+                stash.state.disabled = true
+                stash.state.opened = true
+
+                QBCore.Functions.Notify("You looted the stash.", "success")
+                TriggerServerEvent(stash.serverEvent)
+                OnStashLooted(stash)
+
+            else
+                stash.state.failed += 1  
+                if stash.state.failed >= 3 then
+                    stash.state.disabled = true
+                    QBCore.Functions.Notify("This stash is now locked.", "error")
+                else
+                    QBCore.Functions.Notify("Failed ("..(3 - stash.state.failed).." left).", "error")
+                end
+            end
+        end)
+    end)
+end
+
+
+
+CreateThread(function()
+    local sellCoords = Config.Sellcoords.Location
+    local pedModel = Config.Sellcoords.Ped
+
+    RequestModel(pedModel)
+    while not HasModelLoaded(pedModel) do Wait(0) end
+
+    local sellPed = CreatePed(0, pedModel, sellCoords.x, sellCoords.y, sellCoords.z - 1.0,
+        Config.Sellcoords.Heading, false, true)
+
+    FreezeEntityPosition(sellPed, true)
+    SetEntityInvincible(sellPed, true)
+    SetBlockingOfNonTemporaryEvents(sellPed, true)
+
+    exports['interact']:AddLocalEntityInteraction({
+        entity = sellPed,
+        distance = 2.0,
+        interactDst = 1.0,
+        options = {
+            {
+                label = "Sell Stolen Electronics",
+                action = function()
+                    TriggerServerEvent("Saad-PawnShoprobbery:sellItems")
+                end
+            }
+        }
+    })
+end)
+
